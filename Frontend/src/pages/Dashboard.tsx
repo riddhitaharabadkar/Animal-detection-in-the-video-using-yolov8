@@ -1,13 +1,27 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Upload, Video, Image as ImageIcon, BarChart3, LogOut, PlayCircle } from "lucide-react";
+import { Upload, Video, Image as ImageIcon, BarChart3, LogOut, PlayCircle, Loader2, ExternalLink, FolderOpen } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+
+interface ProcessingResult {
+  success: boolean;
+  session_id: string;
+  folder_url: string;
+  frames_count: number;
+  frames: string[];
+  message: string;
+}
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingResult, setProcessingResult] = useState<ProcessingResult | null>(null);
+  const [videosProcessed, setVideosProcessed] = useState(0);
+
+  const API_BASE_URL = "http://127.0.0.1:8000";
 
   const handleLogout = () => {
     toast.success("Logged out successfully");
@@ -18,17 +32,48 @@ const Dashboard = () => {
     const file = e.target.files?.[0];
     if (file) {
       setSelectedFile(file);
+      setProcessingResult(null);
       toast.success(`File selected: ${file.name}`);
     }
   };
 
-  const handleProcess = () => {
+  const handleProcess = async () => {
     if (!selectedFile) {
       toast.error("Please select a video file first");
       return;
     }
-    toast.info("Processing video with YOLO detection...");
-    // Add YOLO processing logic here
+
+    setIsProcessing(true);
+    toast.info("Uploading and processing video...");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      const response = await fetch(`${API_BASE_URL}/upload/`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result: ProcessingResult = await response.json();
+
+      if (result.success) {
+        setProcessingResult(result);
+        setVideosProcessed((prev) => prev + 1);
+        toast.success(`Video processed successfully! ${result.frames_count} frames extracted.`);
+      } else {
+        throw new Error(result.message || "Failed to process video");
+      }
+    } catch (error) {
+      console.error("Error processing video:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to process video. Make sure the backend is running.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -58,7 +103,7 @@ const Dashboard = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-4xl font-bold text-primary">0</p>
+              <p className="text-4xl font-bold text-primary">{videosProcessed}</p>
               <p className="text-sm text-muted-foreground mt-2">Total videos analyzed</p>
             </CardContent>
           </Card>
@@ -130,13 +175,63 @@ const Dashboard = () => {
             <Button
               onClick={handleProcess}
               className="w-full"
-              variant="hero"
+              variant="default"
               size="lg"
-              disabled={!selectedFile}
+              disabled={!selectedFile || isProcessing}
             >
-              <PlayCircle className="mr-2 h-5 w-5" />
-              Start Detection Analysis
+              {isProcessing ? (
+                <>
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  Processing Video...
+                </>
+              ) : (
+                <>
+                  <PlayCircle className="mr-2 h-5 w-5" />
+                  Start Detection Analysis
+                </>
+              )}
             </Button>
+
+            {processingResult && (
+              <Card className="mt-4 border-green-500/50 bg-green-50/50 dark:bg-green-950/20">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-green-700 dark:text-green-400">
+                    <FolderOpen className="h-5 w-5" />
+                    Processing Complete!
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-semibold">Frames Extracted:</span> {processingResult.frames_count}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">
+                        <span className="font-semibold">Folder URL:</span>
+                      </span>
+                      <a
+                        href={processingResult.folder_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-primary hover:underline flex items-center gap-1"
+                      >
+                        {processingResult.folder_url}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => window.open(processingResult.folder_url, "_blank")}
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                  >
+                    <FolderOpen className="mr-2 h-4 w-4" />
+                    Open Result Folder
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
           </CardContent>
         </Card>
 
@@ -148,10 +243,53 @@ const Dashboard = () => {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="text-center py-12 text-muted-foreground">
-              <Video className="h-16 w-16 mx-auto mb-4 opacity-50" />
-              <p>No detections yet. Upload a video to get started!</p>
-            </div>
+            {processingResult ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {processingResult.frames.slice(0, 8).map((frame, index) => (
+                    <a
+                      key={index}
+                      href={`${API_BASE_URL}${frame}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="relative group"
+                    >
+                      <div className="aspect-video bg-muted rounded-lg overflow-hidden border-2 border-border hover:border-primary transition-colors">
+                        <img
+                          src={`${API_BASE_URL}${frame}`}
+                          alt={`Frame ${index + 1}`}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = "/placeholder.svg";
+                          }}
+                        />
+                      </div>
+                      <p className="text-xs text-center mt-1 text-muted-foreground">
+                        Frame {index + 1}
+                      </p>
+                    </a>
+                  ))}
+                </div>
+                {processingResult.frames_count > 8 && (
+                  <div className="text-center">
+                    <a
+                      href={processingResult.folder_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-primary hover:underline inline-flex items-center gap-1"
+                    >
+                      View all {processingResult.frames_count} frames
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-muted-foreground">
+                <Video className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                <p>No detections yet. Upload a video to get started!</p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </main>
